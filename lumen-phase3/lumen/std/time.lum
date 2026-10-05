@@ -1,0 +1,11 @@
+# std/time.lum — Lumen 1.1 standard library
+# Thin wrapper around `now()` (new core builtin — seconds since epoch, Float).
+
+fn timer_start():
+    return now()
+
+fn elapsed_seconds(start):
+    return now() - start
+
+fn elapsed_ms(start):
+    return (now() - start) * 1000.0

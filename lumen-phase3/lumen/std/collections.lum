@@ -1,0 +1,110 @@
+# std/collections.lum — Lumen 1.1 standard library
+#
+# Recursion throughout, not for-loop scalar mutation (see std/math.lum).
+# `for` loops below only do container mutation (push), which persists
+# normally — only plain variable reassignment inside a block is shadowed.
+#
+# No map/filter/reduce: Lumen has no first-class functions (types.md
+# §3.10 — a function can only be called by name, never passed as a value).
+
+fn sum(list):
+    return sum_from(list, 0)
+
+fn sum_from(list, i):
+    if i >= len(list):
+        return 0
+    return list[i] + sum_from(list, i + 1)
+
+fn min_list(list):
+    if len(list) == 0:
+        fail("min_list: empty list has no minimum")
+    return min_from(list, 1, list[0])
+
+fn min_from(list, i, best):
+    if i >= len(list):
+        return best
+    if list[i] < best:
+        return min_from(list, i + 1, list[i])
+    return min_from(list, i + 1, best)
+
+fn max_list(list):
+    if len(list) == 0:
+        fail("max_list: empty list has no maximum")
+    return max_from(list, 1, list[0])
+
+fn max_from(list, i, best):
+    if i >= len(list):
+        return best
+    if list[i] > best:
+        return max_from(list, i + 1, list[i])
+    return max_from(list, i + 1, best)
+
+fn reverse(list):
+    if len(list) == 0:
+        return []
+    let rest_reversed = reverse(substring_list(list, 1, len(list) - 1))
+    let out = []
+    for x in rest_reversed:
+        push(out, x)
+    push(out, list[0])
+    return out
+
+fn substring_list(list, start, length):
+    if length <= 0:
+        return []
+    if start >= len(list):
+        return []
+    let result = [list[start]]
+    let rest = substring_list(list, start + 1, length - 1)
+    for x in rest:
+        push(result, x)
+    return result
+
+fn contains(list, item):
+    return index_of(list, item) >= 0
+
+fn index_of(list, item):
+    return index_of_from(list, item, 0)
+
+fn index_of_from(list, item, i):
+    if i >= len(list):
+        return -1
+    if list[i] == item:
+        return i
+    return index_of_from(list, item, i + 1)
+
+fn unique(list):
+    return unique_acc(list, 0, [])
+
+fn unique_acc(list, i, seen):
+    if i >= len(list):
+        return seen
+    if contains(seen, list[i]):
+        return unique_acc(list, i + 1, seen)
+    push(seen, list[i])
+    return unique_acc(list, i + 1, seen)
+
+fn range(n):
+    return range_acc(0, n, [])
+
+fn range_between(start, end):
+    return range_acc(start, end, [])
+
+fn range_acc(i, n, acc):
+    if i >= n:
+        return acc
+    push(acc, i)
+    return range_acc(i + 1, n, acc)
+
+fn concat(a, b):
+    return a + b
+
+fn flatten(list_of_lists):
+    return flatten_acc(list_of_lists, 0, [])
+
+fn flatten_acc(list_of_lists, i, acc):
+    if i >= len(list_of_lists):
+        return acc
+    for x in list_of_lists[i]:
+        push(acc, x)
+    return flatten_acc(list_of_lists, i + 1, acc)

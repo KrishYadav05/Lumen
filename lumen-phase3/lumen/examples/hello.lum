@@ -1,0 +1,20 @@
+let name = "Ada"
+let age = 30
+
+if age >= 18:
+    print "adult"
+else:
+    print "minor"
+
+fn square(x) -> Int:
+    return x * x
+
+let nums = [1, 2, 3, 4]
+for n in nums:
+    print square(n)
+
+print "sum test:"
+fn add(a, b):
+    return a + b
+print add(2, 3)
+print "len of nums: " + len(nums)

@@ -1,0 +1,48 @@
+use "../strings.lum" as strings
+
+test "substring":
+    assert_eq(strings.substring("hello world", 0, 5), "hello")
+    assert_eq(strings.substring("hello world", 6, 5), "world")
+
+test "starts_with and ends_with":
+    assert(strings.starts_with("hello world", "hello"))
+    assert(strings.ends_with("hello world", "world"))
+    assert(not strings.starts_with("hello world", "world"))
+
+test "index_of and contains":
+    assert_eq(strings.index_of("hello world", "world"), 6)
+    assert_eq(strings.index_of("hello world", "xyz"), -1)
+    assert(strings.contains("hello world", "lo wo"))
+
+test "replace":
+    assert_eq(strings.replace("hello world", "world", "lumen"), "hello lumen")
+    assert_eq(strings.replace("aaa", "a", "bb"), "bbbbbb")
+
+test "split":
+    let parts = strings.split("a,b,c", ",")
+    assert_eq(len(parts), 3)
+    assert_eq(parts[1], "b")
+
+test "join":
+    assert_eq(strings.join(["a", "b", "c"], ","), "a,b,c")
+    assert_eq(strings.join([], ","), "")
+
+test "split then join round-trips":
+    let s = "one,two,three"
+    assert_eq(strings.join(strings.split(s, ","), ","), s)
+
+test "to_upper and to_lower":
+    assert_eq(strings.to_upper("hello"), "HELLO")
+    assert_eq(strings.to_lower("HELLO"), "hello")
+    assert_eq(strings.to_upper("Hello World 123"), "HELLO WORLD 123")
+
+test "trim":
+    assert_eq(strings.trim("  hello  "), "hello")
+    assert_eq(strings.trim("   "), "")
+
+test "reverse_str":
+    assert_eq(strings.reverse_str("hello"), "olleh")
+
+test "repeat":
+    assert_eq(strings.repeat("ab", 3), "ababab")
+    assert_eq(strings.repeat("x", 0), "")
