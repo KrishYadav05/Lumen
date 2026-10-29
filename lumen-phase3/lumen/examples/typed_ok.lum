@@ -1,8 +1,0 @@
-fn square(x: Int) -> Int:
-    return x * x
-
-let a: Int = 5
-print square(a)
-
-let name: Str = "Lumen"
-print name

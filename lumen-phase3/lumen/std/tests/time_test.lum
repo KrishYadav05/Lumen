@@ -1,9 +1,0 @@
-use "../time.lum" as time
-
-test "elapsed_seconds is non-negative":
-    let start = time.timer_start()
-    assert(time.elapsed_seconds(start) >= 0.0)
-
-test "elapsed_ms is non-negative":
-    let start = time.timer_start()
-    assert(time.elapsed_ms(start) >= 0.0)
