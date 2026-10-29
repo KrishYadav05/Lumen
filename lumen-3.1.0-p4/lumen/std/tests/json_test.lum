@@ -1,0 +1,259 @@
+use "../json.lum" as json
+
+# ---- null / is_null ----
+
+test "null() produces Nothing":
+    assert_eq(type_of(json.null()), "Nothing")
+
+test "is_null":
+    assert(json.is_null(json.null()))
+    assert(not json.is_null(5))
+    assert(not json.is_null("nothing"))
+    assert(not json.is_null(false))
+
+# ---- json_encode: primitives ----
+
+test "encode Int":
+    assert_eq(json.json_encode(5), "5")
+    assert_eq(json.json_encode(-5), "-5")
+    assert_eq(json.json_encode(0), "0")
+
+test "encode Float":
+    assert_eq(json.json_encode(3.5), "3.5")
+    assert_eq(json.json_encode(4.0), "4.0")
+
+test "encode Bool":
+    assert_eq(json.json_encode(true), "true")
+    assert_eq(json.json_encode(false), "false")
+
+test "encode Nothing as null":
+    assert_eq(json.json_encode(json.null()), "null")
+
+# ---- json_encode: strings and escaping ----
+
+test "encode a plain string":
+    assert_eq(json.json_encode("hello"), chr(34) + "hello" + chr(34))
+
+test "encode a string containing a double quote":
+    let q = chr(34)
+    let s = q + "quoted" + q
+    assert_eq(json.json_encode(s), q + chr(92) + q + "quoted" + chr(92) + q + q)
+
+test "encode a string containing a backslash":
+    let s = "a" + chr(92) + "b"
+    assert_eq(json.json_encode(s), chr(34) + "a" + chr(92) + chr(92) + "b" + chr(34))
+
+test "encode a string containing newline/tab/carriage-return":
+    let s = "a" + chr(10) + "b" + chr(9) + "c" + chr(13) + "d"
+    let encoded = json.json_encode(s)
+    assert_eq(encoded, chr(34) + "a" + chr(92) + "nb" + chr(92) + "tc" + chr(92) + "rd" + chr(34))
+
+test "encode a string containing another control character uses \\u00XX":
+    let s = chr(1)
+    assert_eq(json.json_encode(s), chr(34) + chr(92) + "u0001" + chr(34))
+
+# ---- json_encode: List ----
+
+test "encode an empty List":
+    assert_eq(json.json_encode([]), "[]")
+
+test "encode a List of Int":
+    assert_eq(json.json_encode([1, 2, 3]), "[1,2,3]")
+
+test "encode a nested List":
+    assert_eq(json.json_encode([[1, 2], [3, 4]]), "[[1,2],[3,4]]")
+
+test "encode a List of mixed types":
+    assert_eq(json.json_encode([1, "two", true, json.null()]),
+               "[1," + chr(34) + "two" + chr(34) + ",true,null]")
+
+# ---- json_encode: Dict ----
+
+test "encode an empty Dict":
+    assert_eq(json.json_encode({}), "{}")
+
+test "encode a Dict with Str keys, insertion order preserved":
+    let d = {}
+    d["b"] = 1
+    d["a"] = 2
+    assert_eq(json.json_encode(d), "{" + chr(34) + "b" + chr(34) + ":1," + chr(34) + "a" + chr(34) + ":2}")
+
+test "encode a Dict with a non-Str key fails cleanly":
+    let d = {}
+    d[1] = "x"
+    try:
+        json.json_encode(d)
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+# ---- json_encode: unsupported types fail cleanly ----
+
+struct JsonTestPoint:
+    x
+    y
+
+enum JsonTestOpt:
+    Some(v)
+    None
+
+test "encode a struct fails cleanly (no generic reflection exists to shape it)":
+    try:
+        json.json_encode(JsonTestPoint { x: 1, y: 2 })
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+test "encode an enum fails cleanly":
+    try:
+        json.json_encode(Some(1))
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+# ---- round trip: encode then decode recovers the original value ----
+
+test "round trip a Dict with mixed value types":
+    let original = {}
+    original["name"] = "Ada Lovelace"
+    original["age"] = 36
+    original["active"] = true
+    original["tags"] = ["math", "computing"]
+    let decoded = json.json_decode(json.json_encode(original))
+    assert_eq(decoded["name"], "Ada Lovelace")
+    assert_eq(decoded["age"], 36)
+    assert_eq(decoded["active"], true)
+    assert_eq(decoded["tags"], ["math", "computing"])
+
+test "round trip preserves Int vs Float distinction":
+    assert_eq(type_of(json.json_decode(json.json_encode(5))), "Int")
+    assert_eq(type_of(json.json_decode(json.json_encode(5.0))), "Float")
+
+test "round trip a string with a newline":
+    let s = "line1" + chr(10) + "line2"
+    assert_eq(json.json_decode(json.json_encode(s)), s)
+
+# ---- json_decode: primitives ----
+
+test "decode an Int":
+    assert_eq(json.json_decode("5"), 5)
+    assert_eq(json.json_decode("-5"), -5)
+    assert_eq(type_of(json.json_decode("5")), "Int")
+
+test "decode a Float":
+    assert_eq(json.json_decode("3.5"), 3.5)
+    assert_eq(type_of(json.json_decode("3.5")), "Float")
+
+test "decode true/false/null":
+    assert_eq(json.json_decode("true"), true)
+    assert_eq(json.json_decode("false"), false)
+    assert(json.is_null(json.json_decode("null")))
+
+test "decode a number with an exponent":
+    assert_eq(json.json_decode("1e2"), 100.0)
+    assert_eq(json.json_decode("2.5e2"), 250.0)
+
+test "decode skips leading/trailing/internal whitespace":
+    assert_eq(json.json_decode("  [1,   2,  3]  "), [1, 2, 3])
+
+# ---- json_decode: strings and escapes ----
+
+test "decode a plain string":
+    let q = chr(34)
+    assert_eq(json.json_decode(q + "hello" + q), "hello")
+
+test "decode standard escapes":
+    let q = chr(34)
+    let bs = chr(92)
+    assert_eq(json.json_decode(q + "a" + bs + "nb" + q), "a" + chr(10) + "b")
+    assert_eq(json.json_decode(q + "a" + bs + "tb" + q), "a" + chr(9) + "b")
+    assert_eq(json.json_decode(q + "a" + bs + "" + bs + "b" + q), "a" + chr(92) + "b")
+    assert_eq(json.json_decode(q + "a" + bs + q + "b" + q), "a" + q + "b")
+
+test "decode a \\u00XX escape":
+    let q = chr(34)
+    let bs = chr(92)
+    assert_eq(json.json_decode(q + bs + "u0041" + q), "A")
+    assert_eq(json.json_decode(q + bs + "u0041" + bs + "u0042" + q), "AB")
+
+# ---- json_decode: arrays and objects ----
+
+test "decode an empty array":
+    assert_eq(json.json_decode("[]"), [])
+
+test "decode an array of numbers":
+    assert_eq(json.json_decode("[1,2,3]"), [1, 2, 3])
+
+test "decode a nested array":
+    assert_eq(json.json_decode("[[1,2],[3,4]]"), [[1, 2], [3, 4]])
+
+test "decode an empty object":
+    assert_eq(json.json_decode("{}"), {})
+
+test "decode an object":
+    let q = chr(34)
+    let d = json.json_decode("{" + q + "a" + q + ":1," + q + "b" + q + ":2}")
+    assert_eq(d["a"], 1)
+    assert_eq(d["b"], 2)
+
+test "decode a deeply nested structure":
+    let q = chr(34)
+    let d = json.json_decode("{" + q + "x" + q + ":[1,2,{" + q + "y" + q + ":3}]}")
+    assert_eq(d["x"][0], 1)
+    assert_eq(d["x"][2]["y"], 3)
+
+# ---- json_decode: malformed input fails cleanly, never a raw crash ----
+
+test "decode empty input fails":
+    try:
+        json.json_decode("")
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+test "decode trailing garbage fails":
+    try:
+        json.json_decode("5 6")
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+test "decode an unterminated string fails":
+    try:
+        json.json_decode(chr(34) + "oops")
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+test "decode a malformed object fails":
+    try:
+        json.json_decode("{invalid}")
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+test "decode a malformed array (missing comma) fails":
+    try:
+        json.json_decode("[1 2]")
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+test "decode an invalid literal fails":
+    try:
+        json.json_decode("tru")
+        fail("should have raised")
+    catch e:
+        assert(true)
+
+# ---- repeated calls across the SAME module instance don't corrupt each other ----
+# (regression coverage for the VM's try_stack leak fixed in 2.2 -- see
+# CHANGELOG.md and tests/test_equivalence.py's try_return_equivalence())
+
+test "repeated encode/decode calls on the same imported module do not interfere":
+    assert_eq(json.json_decode(chr(34) + chr(92) + "u0041" + chr(34)), "A")
+    try:
+        json.json_decode("")
+        fail("should have raised")
+    catch e:
+        assert_eq(e.message, "json_decode: unexpected end of input")

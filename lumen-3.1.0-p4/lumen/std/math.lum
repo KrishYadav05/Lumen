@@ -1,0 +1,69 @@
+# std/math.lum — Lumen standard library
+#
+# floor/ceil derive from `%` (no truncation builtin exists); verified:
+# x - (x % 1) is floor(x) for positive AND negative floats.
+#
+# sqrt()/pow() use plain iterative loops with a mutated running variable, as
+# of 2.0. The 1.1 version used recursion here specifically to route around
+# the Rule B bug (a for-loop body's reassignment used to silently shadow
+# instead of mutating the outer variable — fixed in language.md §1.11.1,
+# see CHANGELOG.md). 24 Newton iterations converges to full double precision.
+
+let PI = 3.14159265358979
+let E = 2.71828182845905
+
+fn abs(x):
+    if x < 0:
+        return 0 - x
+    return x
+
+fn min(a, b):
+    if a < b:
+        return a
+    return b
+
+fn max(a, b):
+    if a > b:
+        return a
+    return b
+
+fn floor(x):
+    return x - (x % 1)
+
+fn ceil(x):
+    return 0 - floor(0 - x)
+
+fn round(x):
+    if x >= 0:
+        return floor(x + 0.5)
+    return 0 - floor(0 - x + 0.5)
+
+fn pow(base, exponent):
+    if exponent == 0:
+        return 1
+    if exponent < 0:
+        return 1.0 / pow(base, 0 - exponent)
+    let result = 1
+    for i in range(exponent):
+        result = result * base
+    return result
+
+fn sqrt(x):
+    if x < 0:
+        fail("sqrt: cannot take the square root of a negative number")
+    if x == 0:
+        return 0.0
+    let guess = x / 2.0
+    for i in range(24):
+        guess = (guess + x / guess) / 2.0
+    return guess
+
+fn clamp(x, lo, hi):
+    return max(lo, min(hi, x))
+
+fn sign(x):
+    if x > 0:
+        return 1
+    if x < 0:
+        return -1
+    return 0

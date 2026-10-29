@@ -1,0 +1,385 @@
+# std/json.lum — Lumen standard library
+#
+# JSON encode/decode (added in Language Specification 2.2). Built on three
+# Phase 3 additions made specifically to make this module possible: `chr`/
+# `ord` (the only way to produce a literal `"` character — Lumen's STRING
+# token has no escape mechanism at all, a documented frozen-1.0 lexical
+# limitation, language.md §1.8), `type_of` (safe runtime type dispatch —
+# naive equality against `true`/`false` is unsound in Lumen, since `Bool`
+# is a Python `int` subclass internally and `0 == false`/`1 == true` both
+# hold), and `while` (a cursor-based decoder needs a loop driven by an
+# arbitrary stopping condition, which `for` cannot express, and the
+# project's own 2.0 stdlib rewrite deliberately moved away from recursive,
+# recursion-depth-risking parsers — see CHANGELOG.md's 2.0 and 2.2 entries).
+#
+# Public entry points: json_encode(v), json_decode(s), null(), is_null(v).
+# Everything else in this file is an internal helper (no privacy mechanism
+# exists in Lumen to enforce that — this is a naming convention only, same
+# as every other std/ module).
+#
+# Scope and limitations (stated plainly, not discovered the hard way):
+#   - json_encode supports Int, Float, Bool, Str, List, Dict, and Nothing
+#     (encoded as JSON `null`). Struct and enum VALUES have no natural JSON
+#     mapping here — Lumen has no reflection to list a struct's fields
+#     generically (no `fields(x)` builtin exists) — so encoding one fails
+#     with a clear, named error rather than guessing at a shape. Task,
+#     Channel, and Module values fail the same way.
+#   - Dict keys MUST be Str (this matches JSON itself, which only permits
+#     string object keys): json_encode_dict fails cleanly, naming the
+#     offending key's type, if a Dict holds a non-Str key.
+#   - json_decode's cursor is a 1-element List (`pos = [0]`), mutated via
+#     index-assignment, rather than a [value, next_index] pair threaded
+#     through every call's return. Lumen has no way to pass a primitive Int
+#     "by reference" (and declaring a dedicated cursor struct is no less
+#     verbose) — a single shared mutable box is the standard pattern for a
+#     hand-written recursive-descent parser in a language without reference
+#     parameters, and it reads directly, not as a workaround.
+#   - Number parsing supports the full JSON grammar, including exponents
+#     (`1e10`, `2.5e-3`). A mantissa with a `.` or an exponent always decodes
+#     as a Float (via `io.parse_float`); a bare integer decodes as an Int
+#     (via `io.parse_int`) — matching json_encode's own Int-vs-Float
+#     round-trip (`type_of` distinguishes them, so `1` and `1.0` encode and
+#     decode as different Lumen types, exactly as JSON itself distinguishes
+#     `1` from `1.0`).
+#   - Unicode: non-ASCII characters are passed through unescaped in both
+#     directions (valid per the JSON spec, which permits raw UTF-8 in a
+#     string); `\uXXXX` escapes are decoded on input but never produced on
+#     output except for the C0 control characters below 0x20 that have no
+#     short escape (`\"`, `\\`, `\n`, `\r`, `\t` are all handled directly as
+#     their short forms both ways; `\b`/`\f` decode on input but re-encode
+#     as `\u0008`/`\u000c` rather than their own short forms — still valid
+#     JSON, just not byte-identical to a hand-written original).
+
+use "strings.lum" as strings
+use "io.lum" as io
+use "math.lum" as math
+
+# ---- null ----
+# The only way to produce Lumen's `Nothing` value is as the return value of
+# a function whose body falls off the end without `return` (documented in
+# standard-library.md §8.3's display table) — so that's exactly what this
+# does, rather than inventing a sentinel value of some other type.
+
+fn null():
+    let _is_json_null = true
+
+fn is_null(v):
+    return type_of(v) == "Nothing"
+
+# ---- encoding ----
+
+let HEX_DIGITS = "0123456789abcdef"
+
+fn int_div16_floor(n):
+    # Plain integer division by 16 via repeated subtraction, deliberately
+    # NOT `n / 16` — Lumen's `/` always promotes to Float (types.md
+    # §3.6.1), which would make the result unusable as a Str index (index
+    # keys must be true Ints, standard-library.md §8.5). `n` here is always
+    # a control-code point (0-31), so this loop runs at most once.
+    let q = 0
+    let rem = n
+    while rem >= 16:
+        rem = rem - 16
+        q = q + 1
+    return q
+
+fn to_hex2(n):
+    let hi = int_div16_floor(n)
+    let lo = n % 16
+    return strings.substring(HEX_DIGITS, hi, 1) + strings.substring(HEX_DIGITS, lo, 1)
+
+fn json_escape_char(c):
+    if c == chr(34):
+        return chr(92) + chr(34)
+    if c == chr(92):
+        return chr(92) + chr(92)
+    if c == chr(10):
+        return chr(92) + "n"
+    if c == chr(13):
+        return chr(92) + "r"
+    if c == chr(9):
+        return chr(92) + "t"
+    if ord(c) < 32:
+        return chr(92) + "u00" + to_hex2(ord(c))
+    return c
+
+fn json_encode_string(s):
+    let out = chr(34)
+    for c in s:
+        out = out + json_escape_char(c)
+    return out + chr(34)
+
+fn json_encode_list(l):
+    let out = "["
+    let i = 0
+    let n = len(l)
+    while i < n:
+        if i > 0:
+            out = out + ","
+        out = out + json_encode(l[i])
+        i = i + 1
+    return out + "]"
+
+fn json_encode_dict(d):
+    let out = "{"
+    let first = true
+    for k in d:
+        if type_of(k) != "Str":
+            fail("json_encode: Dict keys must be Str (JSON object keys are "
+                 + "always strings), got a " + type_of(k) + " key")
+        if not first:
+            out = out + ","
+        first = false
+        out = out + json_encode_string(k) + ":" + json_encode(d[k])
+    return out + "}"
+
+fn json_encode(v):
+    let t = type_of(v)
+    if t == "Int":
+        return "" + v
+    if t == "Float":
+        return "" + v
+    if t == "Bool":
+        return "" + v
+    if t == "Str":
+        return json_encode_string(v)
+    if t == "List":
+        return json_encode_list(v)
+    if t == "Dict":
+        return json_encode_dict(v)
+    if t == "Nothing":
+        return "null"
+    fail("json_encode: cannot encode a value of type '" + t + "' -- structs, "
+         + "enums, tasks, channels, and modules have no JSON representation")
+
+# ---- decoding ----
+
+let HEX_VALUE = {"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,
+                  "a":10,"b":11,"c":12,"d":13,"e":14,"f":15,
+                  "A":10,"B":11,"C":12,"D":13,"E":14,"F":15}
+
+fn hex_digit_value(c):
+    try:
+        return HEX_VALUE[c]
+    catch e:
+        fail("json_decode: invalid hex digit '" + c + "' in \\u escape")
+
+fn hex4_to_int(hex_str):
+    let acc = 0
+    for c in hex_str:
+        acc = acc * 16 + hex_digit_value(c)
+    return acc
+
+fn is_json_digit(c):
+    return c >= "0" and c <= "9"
+
+fn is_json_ws(c):
+    return c == " " or c == chr(9) or c == chr(10) or c == chr(13)
+
+fn skip_json_ws(s, pos):
+    while pos[0] < len(s) and is_json_ws(s[pos[0]]):
+        pos[0] = pos[0] + 1
+
+fn peek_json(s, pos):
+    if pos[0] >= len(s):
+        fail("json_decode: unexpected end of input")
+    return s[pos[0]]
+
+fn expect_json_char(s, pos, c):
+    let actual = peek_json(s, pos)
+    if actual != c:
+        fail("json_decode: expected '" + c + "' at position " + ("" + pos[0])
+             + ", got '" + actual + "'")
+    pos[0] = pos[0] + 1
+
+fn decode_escape(s, pos):
+    # pos[0] points at the character right after the backslash.
+    let esc = peek_json(s, pos)
+    if esc == chr(34):
+        pos[0] = pos[0] + 1
+        return chr(34)
+    if esc == chr(92):
+        pos[0] = pos[0] + 1
+        return chr(92)
+    if esc == "/":
+        pos[0] = pos[0] + 1
+        return "/"
+    if esc == "b":
+        pos[0] = pos[0] + 1
+        return chr(8)
+    if esc == "f":
+        pos[0] = pos[0] + 1
+        return chr(12)
+    if esc == "n":
+        pos[0] = pos[0] + 1
+        return chr(10)
+    if esc == "r":
+        pos[0] = pos[0] + 1
+        return chr(13)
+    if esc == "t":
+        pos[0] = pos[0] + 1
+        return chr(9)
+    if esc == "u":
+        pos[0] = pos[0] + 1
+        if pos[0] + 4 > len(s):
+            fail("json_decode: truncated \\u escape")
+        let hex_str = strings.substring(s, pos[0], 4)
+        pos[0] = pos[0] + 4
+        return chr(hex4_to_int(hex_str))
+    fail("json_decode: invalid escape character '" + esc + "'")
+
+fn parse_json_string(s, pos):
+    expect_json_char(s, pos, chr(34))
+    let out = ""
+    let done = false
+    while not done:
+        if pos[0] >= len(s):
+            fail("json_decode: unterminated string literal")
+        let c = s[pos[0]]
+        if c == chr(34):
+            pos[0] = pos[0] + 1
+            done = true
+        else:
+            if c == chr(92):
+                pos[0] = pos[0] + 1
+                out = out + decode_escape(s, pos)
+            else:
+                out = out + c
+                pos[0] = pos[0] + 1
+    return out
+
+fn parse_json_number(s, pos):
+    let mantissa_start = pos[0]
+    if peek_json(s, pos) == "-":
+        pos[0] = pos[0] + 1
+    if pos[0] >= len(s) or not is_json_digit(s[pos[0]]):
+        fail("json_decode: invalid number at position " + ("" + mantissa_start))
+    while pos[0] < len(s) and is_json_digit(s[pos[0]]):
+        pos[0] = pos[0] + 1
+    let is_float = false
+    if pos[0] < len(s) and s[pos[0]] == ".":
+        is_float = true
+        pos[0] = pos[0] + 1
+        if pos[0] >= len(s) or not is_json_digit(s[pos[0]]):
+            fail("json_decode: invalid number -- digit expected after '.' at position "
+                 + ("" + pos[0]))
+        while pos[0] < len(s) and is_json_digit(s[pos[0]]):
+            pos[0] = pos[0] + 1
+    let mantissa_end = pos[0]
+    let exponent = 0
+    if pos[0] < len(s) and (s[pos[0]] == "e" or s[pos[0]] == "E"):
+        is_float = true
+        pos[0] = pos[0] + 1
+        let exp_sign = 1
+        if pos[0] < len(s) and (s[pos[0]] == "+" or s[pos[0]] == "-"):
+            if s[pos[0]] == "-":
+                exp_sign = -1
+            pos[0] = pos[0] + 1
+        let exp_digits_start = pos[0]
+        if pos[0] >= len(s) or not is_json_digit(s[pos[0]]):
+            fail("json_decode: invalid number -- digit expected in exponent at position "
+                 + ("" + pos[0]))
+        while pos[0] < len(s) and is_json_digit(s[pos[0]]):
+            pos[0] = pos[0] + 1
+        let exp_digits = strings.substring(s, exp_digits_start, pos[0] - exp_digits_start)
+        exponent = io.parse_int(exp_digits) * exp_sign
+    let mantissa_str = strings.substring(s, mantissa_start, mantissa_end - mantissa_start)
+    let mantissa_value = 0
+    if is_float:
+        mantissa_value = io.parse_float(mantissa_str)
+    else:
+        mantissa_value = io.parse_int(mantissa_str)
+    if exponent == 0:
+        return mantissa_value
+    return mantissa_value * math.pow(10.0, exponent)
+
+fn parse_json_array(s, pos):
+    expect_json_char(s, pos, "[")
+    let result = []
+    skip_json_ws(s, pos)
+    let done = false
+    if peek_json(s, pos) == "]":
+        pos[0] = pos[0] + 1
+        done = true
+    while not done:
+        let v = parse_json_value(s, pos)
+        push(result, v)
+        skip_json_ws(s, pos)
+        let c = peek_json(s, pos)
+        if c == ",":
+            pos[0] = pos[0] + 1
+            skip_json_ws(s, pos)
+        else:
+            if c == "]":
+                pos[0] = pos[0] + 1
+                done = true
+            else:
+                fail("json_decode: expected ',' or ']' in array at position " + ("" + pos[0]))
+    return result
+
+fn parse_json_object(s, pos):
+    expect_json_char(s, pos, "{")
+    let result = {}
+    skip_json_ws(s, pos)
+    let done = false
+    if peek_json(s, pos) == "}":
+        pos[0] = pos[0] + 1
+        done = true
+    while not done:
+        skip_json_ws(s, pos)
+        if peek_json(s, pos) != chr(34):
+            fail("json_decode: expected a string key in object at position " + ("" + pos[0]))
+        let key = parse_json_string(s, pos)
+        skip_json_ws(s, pos)
+        expect_json_char(s, pos, ":")
+        skip_json_ws(s, pos)
+        let value = parse_json_value(s, pos)
+        result[key] = value
+        skip_json_ws(s, pos)
+        let c = peek_json(s, pos)
+        if c == ",":
+            pos[0] = pos[0] + 1
+            skip_json_ws(s, pos)
+        else:
+            if c == "}":
+                pos[0] = pos[0] + 1
+                done = true
+            else:
+                fail("json_decode: expected ',' or '}' in object at position " + ("" + pos[0]))
+    return result
+
+fn parse_json_literal(s, pos, word, value):
+    let n = len(word)
+    if pos[0] + n > len(s) or strings.substring(s, pos[0], n) != word:
+        fail("json_decode: invalid literal at position " + ("" + pos[0])
+             + " (expected '" + word + "')")
+    pos[0] = pos[0] + n
+    return value
+
+fn parse_json_value(s, pos):
+    skip_json_ws(s, pos)
+    let c = peek_json(s, pos)
+    if c == chr(34):
+        return parse_json_string(s, pos)
+    if c == "[":
+        return parse_json_array(s, pos)
+    if c == "{":
+        return parse_json_object(s, pos)
+    if c == "t":
+        return parse_json_literal(s, pos, "true", true)
+    if c == "f":
+        return parse_json_literal(s, pos, "false", false)
+    if c == "n":
+        return parse_json_literal(s, pos, "null", null())
+    if c == "-" or is_json_digit(c):
+        return parse_json_number(s, pos)
+    fail("json_decode: unexpected character '" + c + "' at position " + ("" + pos[0]))
+
+fn json_decode(s):
+    let pos = [0]
+    let value = parse_json_value(s, pos)
+    skip_json_ws(s, pos)
+    if pos[0] != len(s):
+        fail("json_decode: unexpected trailing characters starting at position "
+             + ("" + pos[0]))
+    return value

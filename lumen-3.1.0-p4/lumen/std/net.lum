@@ -1,0 +1,108 @@
+# std/net.lum — Lumen standard library
+#
+# Thin wrapper over the `http_get` builtin — the only network primitive
+# this language exposes (no POST, no custom headers, no status codes; see
+# `docs/security.md` §7 and `docs/errors.md`'s capability-error table) —
+# plus URL query-string construction, since building a parameterized GET
+# request is the one thing `http_get` alone can't help with, and
+# `get_json`/`fetch_json`, which pair naturally with `std/json.lum`.
+#
+# Capability note (Language Specification 3.0): this file declares `use net`
+# below, which says what the module NEEDS — it grants nothing. A call through
+# this module succeeds only if this file declared `net`, EVERY program or
+# module that imports it declared `net` too, the host granted it for the run
+# (`--allow-net[=HOST[:PORT],...]`), and the host:port requested (and every
+# redirect hop) is inside the granted hosts (`docs/capabilities.md` §5). So a
+# program using `net.get(...)`/`net.get_json(...)` must itself say `use net` at
+# its top level. Importing this module is NOT a capability grant: a library
+# cannot hold authority its importer lacks, and the host decides what is granted.
+#
+# `url_encode` is deliberately scoped to single-byte (ASCII/Latin-1, code
+# points 0-255) input and `fail()`s on anything wider: Lumen has no Bytes
+# type and no UTF-8 encode/decode primitive (`types.md` has exactly Int,
+# Float, Str, Bool, List, Dict, Any), so there is no way to turn a wider
+# Unicode code point into the UTF-8 byte sequence a real URL percent-encoder
+# would need to produce. Stated here as a limitation rather than silently
+# mis-encoding. Percent-encoding uses `%20` for spaces (RFC 3986's
+# "unreserved set" convention), not form-encoding's `+` — there is no POST
+# body in this module for the `+` convention to apply to anyway.
+
+use "strings.lum" as strings
+use "json.lum" as json
+use net
+
+fn get(url):
+    return http_get(url)
+
+fn get_json(url):
+    # Fetch `url` and parse the response body as JSON in one call. Both
+    # `http_get` and `json_decode` already raise a clear Lumen error of
+    # their own on failure; this re-raises neither, so the message tells
+    # you which stage failed (a network error vs. a malformed-JSON error)
+    # rather than obscuring it behind a second, generic wrapper message.
+    return json.json_decode(http_get(url))
+
+let HEX_DIGITS_UPPER = "0123456789ABCDEF"
+
+fn _to_hex2_upper(n):
+    # n must be a single byte value, 0-255 — see this file's header note
+    # on why url_encode doesn't attempt full UTF-8 percent-encoding.
+    let hi = 0
+    let rem = n
+    while rem >= 16:
+        rem = rem - 16
+        hi = hi + 1
+    return strings.substring(HEX_DIGITS_UPPER, hi, 1) + strings.substring(HEX_DIGITS_UPPER, rem, 1)
+
+fn _is_unreserved(c):
+    # RFC 3986's "unreserved" character set: left alone by percent-encoding.
+    return ((c >= "A" and c <= "Z") or (c >= "a" and c <= "z")
+            or (c >= "0" and c <= "9")
+            or c == "-" or c == "." or c == "_" or c == "~")
+
+fn url_encode(s):
+    let result = ""
+    for c in s:
+        if _is_unreserved(c):
+            result = result + c
+        else:
+            let code = ord(c)
+            if code > 255:
+                fail("url_encode: code point " + ("" + code) + " is outside "
+                     + "0-255 -- this module only percent-encodes single-byte "
+                     + "(ASCII/Latin-1) input; see std/net.lum's header comment")
+            result = result + "%" + _to_hex2_upper(code)
+    return result
+
+fn build_query(params):
+    # A Dict of query parameters -> "k1=v1&k2=v2", each key/value
+    # percent-encoded and values stringified the same way `"" + v` does
+    # throughout this standard library (Int/Float/Bool/Str all supported).
+    let param_keys = keys(params)
+    let result = ""
+    let i = 0
+    for k in param_keys:
+        if i > 0:
+            result = result + "&"
+        result = result + url_encode(k) + "=" + url_encode("" + params[k])
+        i = i + 1
+    return result
+
+fn with_query(url, params):
+    # Appends `params` as a query string, joining with "?" or "&" depending
+    # on whether `url` already has a "?" in it. An empty `params` Dict
+    # returns `url` unchanged (no trailing "?" added).
+    let q = build_query(params)
+    if len(q) == 0:
+        return url
+    if strings.contains(url, "?"):
+        return url + "&" + q
+    return url + "?" + q
+
+fn fetch(url, params):
+    # get(url) with query parameters attached: fetch(url, {}) == get(url).
+    return get(with_query(url, params))
+
+fn fetch_json(url, params):
+    # get_json(url) with query parameters attached.
+    return get_json(with_query(url, params))

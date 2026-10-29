@@ -1,0 +1,56 @@
+# examples/lowpunct_demo.lum — Lumen 2.1's low-punctuation syntax
+# (language.md §1.13). Every form below has an equivalent, still-legal
+# 1.0-2.0 spelling with the colons/commas/parens put back; this file just
+# shows the new, lighter-weight alternative.
+
+fn add a b
+    return a + b
+
+fn clamp x as Int lo as Int hi as Int returns Int
+    if x < lo
+        return lo
+    if x > hi
+        return hi
+    return x
+
+fn identity x as T returns T   # auto-generic: no <T> needed
+    return x
+
+struct Point
+    x
+    y
+
+enum Opt
+    Some value
+    None
+
+fn half n
+    if n % 2 == 0
+        return Some (n / 2)   # compound argument needs its own parens
+    else
+        return None
+
+let nums = [1 2 3 4 5]
+let total = 0
+for n in nums
+    total = total + n
+print "sum:" total
+
+print add 2 3            # paren-free call
+print add 2 3 + 1         # application binds tighter than '+': (add 2 3) + 1
+print add 2 (3 + 1)       # compound argument -> add(2, 4)
+print identity 42
+
+let p = Point { x is 1 y is 2 }
+print "point total:" p.x + p.y
+
+let scores = {"ada" is 92 "lin" is 88}
+print scores["ada"]
+
+match half 10
+    Some v
+        print "got" v
+    None
+        print "nothing"
+
+print clamp total 0 10

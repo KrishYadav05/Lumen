@@ -1,0 +1,275 @@
+use "../fs.lum" as fs
+use "../strings.lum" as strings
+use fs
+
+# Run `lumen test` from the repository root: the fixture/scratch paths below
+# are relative to the current directory, because the fs builtins (unlike
+# `use "..."` imports) resolve paths against the process's working directory.
+# Lumen has no mkdir/temp-dir builtin, so tests write only inside the
+# pre-existing std/tests/fixtures/scratch/ directory, delete their own files
+# first (so a previously-failed run can't poison this one) and again when done.
+# The committed, read-only fixtures live in std/tests/fixtures/fs/.
+#
+# Capabilities (Language Specification 3.0): this file declares `use fs`, which
+# only says what it needs. The tests run with the grant the host gives them:
+#
+#     lumen test std/tests/ --allow-fs=std/tests/fixtures
+#
+# i.e. file access restricted to the fixtures directory — so the last two tests
+# can also verify that the restriction really holds. (Without a grant every
+# fs call here fails with a PermissionError: default-deny.)
+
+let FIX = "std/tests/fixtures/fs"
+let SCR = "std/tests/fixtures/scratch"
+
+test "fixtures are reachable (run lumen test from the repository root)":
+    assert(fs.is_file(FIX + "/hello.txt"))
+    assert(fs.is_file(SCR + "/README.txt"))
+
+test "is_file: files yes, directories and missing paths no":
+    assert(fs.is_file(FIX + "/hello.txt"))
+    assert(not fs.is_file(FIX))
+    assert(not fs.is_file(FIX + "/nested"))
+    assert(not fs.is_file(FIX + "/does-not-exist.txt"))
+
+test "split_lines follows splitlines: a trailing newline adds no empty line":
+    let nl = chr(10)
+    assert_eq(fs.split_lines(""), [])
+    assert_eq(fs.split_lines("a"), ["a"])
+    assert_eq(fs.split_lines("a" + nl), ["a"])
+    assert_eq(fs.split_lines("a" + nl + "b"), ["a", "b"])
+    assert_eq(fs.split_lines("a" + nl + "b" + nl), ["a", "b"])
+
+test "split_lines keeps empty lines in the middle (and a lone newline is one empty line)":
+    let nl = chr(10)
+    assert_eq(fs.split_lines("a" + nl + nl + "b"), ["a", "", "b"])
+    let lone = fs.split_lines(nl)
+    assert_eq(len(lone), 1)
+    assert_eq(lone[0], "")
+
+test "split_lines handles many lines":
+    let nl = chr(10)
+    let text = ""
+    for i in range(3000):
+        text = text + "line" + nl
+    let lines = fs.split_lines(text)
+    assert_eq(len(lines), 3000)
+    assert_eq(lines[2999], "line")
+
+test "read_lines reads a fixture file":
+    assert_eq(fs.read_lines(FIX + "/hello.txt"), ["alpha", "beta", "gamma"])
+
+test "read_lines normalizes CRLF line endings":
+    let p = SCR + "/crlf.txt"
+    fs.delete_if_exists(p)
+    fs.write_file(p, "one" + chr(13) + chr(10) + "two" + chr(13) + chr(10) + "three")
+    assert_eq(fs.read_lines(p), ["one", "two", "three"])
+    fs.delete_if_exists(p)
+
+test "write_lines then read_lines round-trips, including empty lines":
+    let p = SCR + "/roundtrip.txt"
+    fs.delete_if_exists(p)
+    fs.write_lines(p, ["x", "", "z"])
+    assert_eq(fs.read_lines(p), ["x", "", "z"])
+    fs.delete_if_exists(p)
+
+test "write_lines of an empty list writes an empty file":
+    let p = SCR + "/empty.txt"
+    fs.delete_if_exists(p)
+    fs.write_lines(p, [])
+    assert(fs.is_file(p))
+    assert_eq(fs.file_size(p), 0)
+    assert_eq(fs.read_lines(p), [])
+    fs.delete_if_exists(p)
+
+test "write_lines overwrites and converts non-Str elements to display form":
+    let p = SCR + "/mixed.txt"
+    fs.delete_if_exists(p)
+    fs.write_lines(p, ["old", "old", "old"])
+    fs.write_lines(p, [1, 2.5, true])
+    assert_eq(fs.read_lines(p), ["1", "2.5", "true"])
+    fs.delete_if_exists(p)
+
+test "append_line creates the file, then appends":
+    let p = SCR + "/append.txt"
+    fs.delete_if_exists(p)
+    fs.append_line(p, "first")
+    fs.append_line(p, "second")
+    assert_eq(fs.read_lines(p), ["first", "second"])
+    fs.delete_if_exists(p)
+
+test "file_size counts characters including the trailing newline":
+    assert_eq(fs.file_size(FIX + "/hello.txt"), 17)
+    assert_eq(fs.file_size(FIX + "/nested/inner.txt"), 5)
+
+test "copy_file copies and overwrites, leaving the source in place":
+    let src = SCR + "/copy_src.txt"
+    let dst = SCR + "/copy_dst.txt"
+    fs.delete_if_exists(src)
+    fs.delete_if_exists(dst)
+    fs.write_lines(src, ["one", "two"])
+    fs.write_lines(dst, ["stale"])
+    fs.copy_file(src, dst)
+    assert_eq(fs.read_lines(dst), ["one", "two"])
+    assert_eq(fs.read_lines(src), ["one", "two"])
+    fs.delete_if_exists(src)
+    fs.delete_if_exists(dst)
+
+test "move_file moves: destination has the content, source is gone":
+    let src = SCR + "/move_src.txt"
+    let dst = SCR + "/move_dst.txt"
+    fs.delete_if_exists(src)
+    fs.delete_if_exists(dst)
+    fs.write_lines(src, ["payload"])
+    fs.move_file(src, dst)
+    assert(not fs.is_file(src))
+    assert_eq(fs.read_lines(dst), ["payload"])
+    fs.delete_if_exists(dst)
+
+test "move_file onto itself is a no-op, however the path is spelled":
+    # A naive copy-then-delete would destroy the only copy here.
+    let p = SCR + "/move_self.txt"
+    fs.delete_if_exists(p)
+    fs.write_lines(p, ["precious"])
+    fs.move_file(p, p)
+    assert_eq(fs.read_lines(p), ["precious"])
+    fs.move_file(p, SCR + "/./move_self.txt")
+    assert_eq(fs.read_lines(p), ["precious"])
+    fs.move_file(p, SCR + "/sub/../move_self.txt")
+    assert_eq(fs.read_lines(p), ["precious"])
+    fs.delete_if_exists(p)
+
+test "delete_if_exists reports whether it deleted anything":
+    let p = SCR + "/maybe.txt"
+    fs.delete_if_exists(p)
+    assert_eq(fs.delete_if_exists(p), false)
+    fs.write_lines(p, ["x"])
+    assert_eq(fs.delete_if_exists(p), true)
+    assert(not fs.is_file(p))
+    assert_eq(fs.delete_if_exists(p), false)
+
+test "delete_if_exists still fails on a directory (files only, never directories)":
+    try:
+        fs.delete_if_exists(FIX + "/nested")
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "could not delete"))
+    assert(fs.is_file(FIX + "/nested/inner.txt"))
+
+test "list_files returns only the regular files, sorted":
+    assert_eq(fs.list_files(FIX), ["data.json", "hello.txt"])
+    assert_eq(fs.list_files(FIX + "/nested"), ["inner.txt"])
+
+test "list_subdirs returns only the directories, sorted":
+    assert_eq(fs.list_subdirs(FIX), ["nested"])
+    assert_eq(fs.list_subdirs(FIX + "/nested"), [])
+
+test "list_files on a missing directory fails with the OS reason":
+    try:
+        fs.list_files(FIX + "/does-not-exist")
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "could not list directory"))
+
+test "read_json parses a JSON file":
+    let cfg = fs.read_json(FIX + "/data.json")
+    assert_eq(cfg["name"], "fixture")
+    assert_eq(cfg["tags"], ["a", "b"])
+    assert_eq(cfg["n"], 3)
+
+test "write_json then read_json round-trips nested data":
+    let p = SCR + "/out.json"
+    fs.delete_if_exists(p)
+    let value = {"list": [1, 2.5, "three", true], "nested": {"k": "v"}}
+    fs.write_json(p, value)
+    assert_eq(fs.read_json(p), value)
+    fs.delete_if_exists(p)
+
+test "write_json fails before touching the file when the value can't be encoded":
+    let p = SCR + "/untouched.json"
+    fs.delete_if_exists(p)
+    fs.write_json(p, {"ok": 1})
+    try:
+        fs.write_json(p, {1: "int keys are not valid JSON"})
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "json_encode"))
+    assert_eq(fs.read_json(p), {"ok": 1})
+    fs.delete_if_exists(p)
+
+test "read_lines and read_json propagate a missing file's OS error":
+    try:
+        fs.read_lines(SCR + "/nope.txt")
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "could not read"))
+    try:
+        fs.read_json(SCR + "/nope.json")
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "could not read"))
+
+test "the re-exported builtins work when the caller declared fs and the host granted it":
+    let p = SCR + "/reexport.txt"
+    fs.delete_if_exists(p)
+    assert_eq(fs.file_exists(p), false)
+    fs.write_file(p, "abc")
+    fs.append_file(p, "def")
+    assert_eq(fs.read_file(p), "abcdef")
+    assert_eq(fs.file_exists(p), true)
+    assert_eq(fs.is_dir(p), false)
+    assert_eq(fs.is_dir(SCR), true)
+    assert(strings.contains(strings.join(fs.list_dir(SCR), ","), "reexport.txt"))
+    fs.delete_file(p)
+    assert_eq(fs.file_exists(p), false)
+
+test "re-exported builtins raise the same errors as the raw builtins":
+    try:
+        fs.read_file(SCR + "/nope.txt")
+        fail("should have raised")
+    catch e:
+        assert_eq(e.message, "could not read '" + SCR + "/nope.txt': No such file or directory")
+    try:
+        fs.delete_file(SCR + "/nope.txt")
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "could not delete"))
+    try:
+        fs.list_dir(SCR + "/README.txt")
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "Not a directory"))
+
+test "importing std/fs.lum is not a grant: the host's directory restriction still applies":
+    # The run grants fs for std/tests/fixtures only. A path that leaves that
+    # directory is denied — through the re-exported wrappers AND through the raw
+    # builtins — however it is spelled.
+    let outside = FIX + "/../../fs.lum"
+    try:
+        fs.read_file(outside)
+        fail("should have been denied")
+    catch e:
+        assert_eq(e.kind, "PermissionError")
+        assert_eq(e.reason, "out-of-scope")
+        assert_eq(e.capability, "fs.read")
+    try:
+        file_exists(outside)
+        fail("should have been denied")
+    catch e:
+        assert_eq(e.kind, "PermissionError")
+        assert_eq(e.reason, "out-of-scope")
+
+test "a denied write leaves the file system untouched":
+    let target = FIX + "/../../should-not-exist.txt"
+    try:
+        fs.write_file(target, "x")
+        fail("should have been denied")
+    catch e:
+        assert_eq(e.reason, "out-of-scope")
+    assert_eq(fs.is_file(SCR + "/README.txt"), true)
+    try:
+        fs.read_file(target)
+        fail("should have been denied")
+    catch e:
+        # denied, not "no such file": the program learns nothing about what lies outside
+        assert_eq(e.reason, "out-of-scope")

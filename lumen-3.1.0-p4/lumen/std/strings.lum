@@ -1,0 +1,186 @@
+# std/strings.lum — Lumen standard library
+#
+# Built on `substring`. As of 2.0, the character-walking functions
+# (substring, to_upper, to_lower, reverse_str, trim_start, index_of_from,
+# repeat) use plain iterative loops — with a mutated accumulator, and the
+# native `range()` builtin to drive any counted loop — instead of
+# recursion. The 1.1 version used recursion everywhere for two compounding
+# reasons: the Rule B bug (fixed, language.md §1.11.1) and no non-recursive
+# way to count at all. Long strings no longer risk the interpreter's
+# recursion-depth limit the way the old version did.
+# As of 2.3, `split` and `replace` are iterative too (they were the two
+# functions 2.0 left recursive — one call per match — and `split` overflowed
+# the interpreter's stack at ~300 separators; measured, see CHANGELOG.md's
+# 2.3 entry), and `substring` costs O(length of the slice) rather than
+# O(length of the whole string): it used to walk every character of `s` on
+# every call, which made `index_of`/`starts_with`/`ends_with` (all built on
+# it) needlessly quadratic.
+# `trim` only strips ASCII spaces: Lumen has no string escapes and a
+# literal cannot span a source line, so a tab/newline can't be written.
+
+fn substring(s, start, length):
+    # The characters of `s` in the window [start, start + length), clamped to
+    # the string — a negative `start` eats into `length` rather than wrapping
+    # (substring("hello", -2, 5) is "hel"), and a window past the end is "".
+    if length <= 0:
+        return ""
+    if start < 0:
+        return substring(s, 0, length + start)
+    let end = start + length
+    if end > len(s):
+        end = len(s)
+    let result = ""
+    let i = start
+    while i < end:
+        result = result + s[i]
+        i = i + 1
+    return result
+
+fn starts_with(s, prefix):
+    if len(prefix) > len(s):
+        return false
+    return substring(s, 0, len(prefix)) == prefix
+
+fn ends_with(s, suffix):
+    if len(suffix) > len(s):
+        return false
+    return substring(s, len(s) - len(suffix), len(suffix)) == suffix
+
+fn index_of_from(s, sub, start):
+    let limit = len(s) - len(sub)
+    let result = -1
+    for offset in range(limit - start + 1):
+        let pos = start + offset
+        if result < 0 and substring(s, pos, len(sub)) == sub:
+            result = pos
+    return result
+
+fn index_of(s, sub):
+    if len(sub) == 0:
+        return 0
+    return index_of_from(s, sub, 0)
+
+fn last_index_of(s, sub):
+    # Rightmost occurrence of `sub` in `s`, or -1 if absent. Built on
+    # `index_of` + `reverse_str` rather than its own scan: reversing both
+    # strings turns "find the last match" into "find the first match",
+    # and the match position translates back via `len(s) - len(sub) - idx`
+    # (idx being the match's offset in the two reversed strings). Matches
+    # Python's `str.rfind` convention for the empty-needle case too:
+    # `last_index_of(s, "")` is `len(s)`, same as `"...".rfind("")`.
+    if len(sub) == 0:
+        return len(s)
+    let rev_idx = index_of(reverse_str(s), reverse_str(sub))
+    if rev_idx < 0:
+        return -1
+    return len(s) - len(sub) - rev_idx
+
+fn contains(s, sub):
+    return index_of(s, sub) >= 0
+
+fn replace(s, old, new):
+    # Every non-overlapping occurrence of `old`, scanning left to right (so
+    # replace("aaa", "aa", "b") is "ba", like Python's str.replace). One
+    # pass: characters accumulate in `pending`, and the moment `pending`
+    # ends with `old` that tail is swapped for `new`. Iterative on purpose —
+    # the recursive version made one Lumen call per occurrence.
+    if len(old) == 0:
+        return s
+    let out = ""
+    let pending = ""
+    for c in s:
+        pending = pending + c
+        if ends_with(pending, old):
+            out = out + substring(pending, 0, len(pending) - len(old)) + new
+            pending = ""
+    return out + pending
+
+fn split(s, sep):
+    # Pieces of `s` between non-overlapping occurrences of `sep`, scanning
+    # left to right (like Python's str.split(sep): "a,,b" gives
+    # ["a", "", "b"], and a separator at either end gives an empty first/last
+    # piece). `sep` must not be empty. Iterative, same technique as
+    # `replace`: the recursive version made one Lumen call per separator and
+    # overflowed the interpreter's stack at a few hundred of them.
+    if len(sep) == 0:
+        fail("split: separator must not be empty")
+    let parts = []
+    let pending = ""
+    for c in s:
+        pending = pending + c
+        if ends_with(pending, sep):
+            push(parts, substring(pending, 0, len(pending) - len(sep)))
+            pending = ""
+    push(parts, pending)
+    return parts
+
+fn join(parts, sep):
+    if len(parts) == 0:
+        return ""
+    let out = parts[0]
+    let idx = 0
+    for part in parts:
+        if idx > 0:
+            out = out + sep + part
+        idx = idx + 1
+    return out
+
+let UPPER_MAP = {"a":"A","b":"B","c":"C","d":"D","e":"E","f":"F","g":"G","h":"H",
+                  "i":"I","j":"J","k":"K","l":"L","m":"M","n":"N","o":"O","p":"P",
+                  "q":"Q","r":"R","s":"S","t":"T","u":"U","v":"V","w":"W","x":"X",
+                  "y":"Y","z":"Z"}
+let LOWER_MAP = {"A":"a","B":"b","C":"c","D":"d","E":"e","F":"f","G":"g","H":"h",
+                  "I":"i","J":"j","K":"k","L":"l","M":"m","N":"n","O":"o","P":"p",
+                  "Q":"q","R":"r","S":"s","T":"t","U":"u","V":"v","W":"w","X":"x",
+                  "Y":"y","Z":"z"}
+
+fn upper_char(c):
+    try:
+        return UPPER_MAP[c]
+    catch e:
+        return c
+
+fn lower_char(c):
+    try:
+        return LOWER_MAP[c]
+    catch e:
+        return c
+
+fn to_upper(s):
+    let result = ""
+    for c in s:
+        result = result + upper_char(c)
+    return result
+
+fn to_lower(s):
+    let result = ""
+    for c in s:
+        result = result + lower_char(c)
+    return result
+
+fn trim_start(s):
+    let result = ""
+    let trimming = true
+    for c in s:
+        if not (trimming and c == " "):
+            trimming = false
+            result = result + c
+    return result
+
+fn reverse_str(s):
+    let result = ""
+    for c in s:
+        result = c + result
+    return result
+
+fn trim_end(s):
+    return reverse_str(trim_start(reverse_str(s)))
+
+fn trim(s):
+    return trim_end(trim_start(s))
+
+fn repeat(s, n):
+    let result = ""
+    for i in range(n):
+        result = result + s
+    return result

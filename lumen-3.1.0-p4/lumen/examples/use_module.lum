@@ -1,0 +1,5 @@
+use "math_utils.lum" as mu
+
+print mu.PI
+print mu.square(5)
+print mu.circle_area(2)

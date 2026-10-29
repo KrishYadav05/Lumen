@@ -1,0 +1,96 @@
+use "../path.lum" as path
+
+test "is_absolute":
+    assert(path.is_absolute("/a/b"))
+    assert(not path.is_absolute("a/b"))
+    assert(not path.is_absolute(""))
+
+test "join, two-argument":
+    assert_eq(path.join("a", "b"), "a/b")
+    assert_eq(path.join("a/", "b"), "a/b")
+    assert_eq(path.join("a", ""), "a/")
+    assert_eq(path.join("", "b"), "b")
+
+test "join with an absolute second argument resets to it":
+    # Matches Python's os.path.join(a, b) convention, stated in this
+    # module's header comment: an absolute b discards a entirely.
+    assert_eq(path.join("a", "/b"), "/b")
+    assert_eq(path.join("/x/y", "/b/c"), "/b/c")
+
+test "join_all":
+    assert_eq(path.join_all(["a", "b", "c"]), "a/b/c")
+    assert_eq(path.join_all(["a"]), "a")
+    assert_eq(path.join_all([]), "")
+    assert_eq(path.join_all(["a", "/b", "c"]), "/b/c")
+
+test "dirname, ordinary paths":
+    assert_eq(path.dirname("a/b/c.txt"), "a/b")
+    assert_eq(path.dirname("file.txt"), "")
+    assert_eq(path.dirname("a/b/"), "a/b")
+
+test "dirname, root cases (a bare '/' head is kept, never collapsed to '')":
+    assert_eq(path.dirname("/a"), "/")
+    assert_eq(path.dirname("/"), "/")
+    assert_eq(path.dirname("/a/b"), "/a")
+
+test "basename, ordinary paths":
+    assert_eq(path.basename("a/b/c.txt"), "c.txt")
+    assert_eq(path.basename("file.txt"), "file.txt")
+
+test "basename, trailing slash yields empty (not the prior segment)":
+    assert_eq(path.basename("a/b/"), "")
+    assert_eq(path.basename("/"), "")
+
+test "split returns [dirname, basename] as a pair":
+    assert_eq(path.split("a/b/c.txt"), ["a/b", "c.txt"])
+    assert_eq(path.split("/a"), ["/", "a"])
+    assert_eq(path.split("noslash"), ["", "noslash"])
+
+test "extension, ordinary cases":
+    assert_eq(path.extension("file.tar.gz"), ".gz")
+    assert_eq(path.extension("a/b.txt"), ".txt")
+    assert_eq(path.extension("file"), "")
+
+test "extension, dotfiles have no extension by convention":
+    assert_eq(path.extension(".bashrc"), "")
+    assert_eq(path.extension("a/.bashrc"), "")
+
+test "extension, a trailing-slash directory segment has no extension":
+    assert_eq(path.extension("noext/"), "")
+
+test "stem is basename with its extension removed":
+    assert_eq(path.stem("file.tar.gz"), "file.tar")
+    assert_eq(path.stem("a/b.txt"), "b")
+    assert_eq(path.stem("file"), "file")
+    assert_eq(path.stem(".bashrc"), ".bashrc")
+
+test "normalize collapses '.' segments and repeated slashes":
+    assert_eq(path.normalize("a/./b/./c"), "a/b/c")
+    assert_eq(path.normalize("//a//b//"), "/a/b")
+    assert_eq(path.normalize("."), ".")
+    assert_eq(path.normalize("./"), ".")
+    assert_eq(path.normalize(""), ".")
+
+test "normalize resolves '..' segments against a real preceding segment":
+    assert_eq(path.normalize("a/./b/../c"), "a/c")
+    assert_eq(path.normalize("/a/b/../../c"), "/c")
+    assert_eq(path.normalize("a/b/./c/../../d"), "a/d")
+
+test "normalize keeps a leading '..' on a relative path (no root to climb above)":
+    assert_eq(path.normalize("a/../../b"), "../b")
+    assert_eq(path.normalize("../a"), "../a")
+    assert_eq(path.normalize("../../a"), "../../a")
+
+test "normalize drops a '..' that would climb above an absolute root":
+    assert_eq(path.normalize("/.."), "/")
+    assert_eq(path.normalize("/../a"), "/a")
+    assert_eq(path.normalize("/../../a"), "/a")
+
+test "normalize on an already-normal path is a no-op":
+    assert_eq(path.normalize("a/b/c"), "a/b/c")
+    assert_eq(path.normalize("/a/b/c"), "/a/b/c")
+
+test "round trip: splitting and rejoining a normalized path reproduces it":
+    let p = path.normalize("a//b/./c/../d")
+    let parts = path.split(p)
+    assert_eq(path.join(parts[0], parts[1]), p)

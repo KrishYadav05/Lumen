@@ -1,0 +1,109 @@
+use "../strings.lum" as strings
+
+test "substring":
+    assert_eq(strings.substring("hello world", 0, 5), "hello")
+    assert_eq(strings.substring("hello world", 6, 5), "world")
+
+test "starts_with and ends_with":
+    assert(strings.starts_with("hello world", "hello"))
+    assert(strings.ends_with("hello world", "world"))
+    assert(not strings.starts_with("hello world", "world"))
+
+test "index_of and contains":
+    assert_eq(strings.index_of("hello world", "world"), 6)
+    assert_eq(strings.index_of("hello world", "xyz"), -1)
+    assert(strings.contains("hello world", "lo wo"))
+
+test "last_index_of":
+    assert_eq(strings.last_index_of("hello.world.txt", "."), 11)
+    assert_eq(strings.last_index_of("aXbXcXd", "X"), 5)
+    assert_eq(strings.last_index_of("abcXYabcXY", "XY"), 8)
+    assert_eq(strings.last_index_of("hello", "xyz"), -1)
+    assert_eq(strings.last_index_of("abc", ""), 3)
+    assert_eq(strings.last_index_of("a", "a"), 0)
+    # first and last coincide for a single occurrence
+    assert_eq(strings.last_index_of("hello world", "world"),
+              strings.index_of("hello world", "world"))
+
+test "replace":
+    assert_eq(strings.replace("hello world", "world", "lumen"), "hello lumen")
+    assert_eq(strings.replace("aaa", "a", "bb"), "bbbbbb")
+
+test "split":
+    let parts = strings.split("a,b,c", ",")
+    assert_eq(len(parts), 3)
+    assert_eq(parts[1], "b")
+
+test "join":
+    assert_eq(strings.join(["a", "b", "c"], ","), "a,b,c")
+    assert_eq(strings.join([], ","), "")
+
+test "split then join round-trips":
+    let s = "one,two,three"
+    assert_eq(strings.join(strings.split(s, ","), ","), s)
+
+test "to_upper and to_lower":
+    assert_eq(strings.to_upper("hello"), "HELLO")
+    assert_eq(strings.to_lower("HELLO"), "hello")
+    assert_eq(strings.to_upper("Hello World 123"), "HELLO WORLD 123")
+
+test "trim":
+    assert_eq(strings.trim("  hello  "), "hello")
+    assert_eq(strings.trim("   "), "")
+
+test "reverse_str":
+    assert_eq(strings.reverse_str("hello"), "olleh")
+
+test "repeat":
+    assert_eq(strings.repeat("ab", 3), "ababab")
+    assert_eq(strings.repeat("x", 0), "")
+
+test "substring clamps to the string and lets a negative start eat into the length":
+    assert_eq(strings.substring("hello", 1, 3), "ell")
+    assert_eq(strings.substring("hello", -2, 5), "hel")
+    assert_eq(strings.substring("hello", -9, 3), "")
+    assert_eq(strings.substring("hello", 3, 99), "lo")
+    assert_eq(strings.substring("hello", 5, 2), "")
+    assert_eq(strings.substring("hello", 99, 2), "")
+    assert_eq(strings.substring("hello", 0, 0), "")
+    assert_eq(strings.substring("", 0, 3), "")
+
+test "split edge cases match Python's str.split":
+    assert_eq(strings.split("", ","), [""])
+    assert_eq(strings.split("abc", ","), ["abc"])
+    assert_eq(strings.split(",", ","), ["", ""])
+    assert_eq(strings.split("a,,b", ","), ["a", "", "b"])
+    assert_eq(strings.split(",a,", ","), ["", "a", ""])
+    assert_eq(strings.split("a--b--c", "--"), ["a", "b", "c"])
+    # non-overlapping, scanning left to right
+    assert_eq(strings.split("aaa", "aa"), ["", "a"])
+    assert_eq(strings.split("aab", "ab"), ["a", ""])
+
+test "split rejects an empty separator":
+    try:
+        strings.split("abc", "")
+        fail("should have raised")
+    catch e:
+        assert_eq(e.message, "split: separator must not be empty")
+
+test "replace edge cases match Python's str.replace":
+    assert_eq(strings.replace("", "a", "b"), "")
+    assert_eq(strings.replace("abc", "", "X"), "abc")
+    assert_eq(strings.replace("abc", "z", "X"), "abc")
+    assert_eq(strings.replace("aaa", "aa", "b"), "ba")
+    assert_eq(strings.replace("abab", "ab", ""), "")
+    assert_eq(strings.replace("a.b.c", ".", ".."), "a..b..c")
+    # the replacement text is never rescanned
+    assert_eq(strings.replace("aa", "a", "aa"), "aaaa")
+
+test "split and replace handle thousands of matches (no per-match recursion)":
+    # The recursive versions made one Lumen call per match: split overflowed
+    # the interpreter's stack at ~300 separators, and on the VM it took
+    # ~19s for 300 (measured, CHANGELOG.md 2.3).
+    let text = strings.repeat("line,", 3000)
+    let parts = strings.split(text, ",")
+    assert_eq(len(parts), 3001)
+    assert_eq(parts[0], "line")
+    assert_eq(parts[3000], "")
+    assert_eq(len(strings.replace(text, ",", ";")), 15000)
+    assert_eq(strings.replace(text, "line,", ""), "")

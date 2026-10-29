@@ -1,0 +1,131 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Lumen",
+  "scopeName": "source.lumen",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#capability"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.lumen",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.lumen",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.lumen",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.lumen",
+          "match": "\\b\\d+(\\.\\d+)?\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.lumen",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "support.constant.variant.lumen",
+          "match": "\\b(Ok|Err|Some|None)\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.lumen",
+          "match": "\\b(if|else|for|in|while|return|try|catch|finally|match|spawn|test)\\b"
+        },
+        {
+          "name": "keyword.other.lumen",
+          "match": "\\b(let|fn|struct|enum|use|as|returns|is)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.lumen",
+          "match": "\\b(and|or|not)\\b"
+        }
+      ]
+    },
+    "capability": {
+      "patterns": [
+        {
+          "name": "support.constant.capability.lumen",
+          "match": "\\b(fs\\.(?:read|write|list)|net\\.http|fs|net)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.lumen",
+          "match": "\\b(Int|Float|Str|Bool|List|Dict|Any|Result|Option)\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.lumen",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\()"
+        },
+        {
+          "name": "support.function.builtin.lumen",
+          "match": "\\b(print|len|push|keys|values|read_file|write_file|http_get|fail|wait|chan|send|receive|assert|assert_eq|assert_ne|now|read_line|range|chr|ord|type_of|file_exists|append_file|list_dir|delete_file|is_dir|fail_with|is_err|is_none|is_ok|is_some|ok_or|unwrap|unwrap_or)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.lumen",
+          "match": "(==|!=|<=|>=|->|\\+|\\-|\\*|/|%|<|>|=|\\.|\\?)"
+        }
+      ]
+    }
+  }
+}

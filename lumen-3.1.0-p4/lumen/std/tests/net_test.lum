@@ -1,0 +1,91 @@
+use "../net.lum" as net
+use "../strings.lum" as strings
+use net
+
+# Capabilities (Language Specification 3.0): this file declares `use net`,
+# which only says what it needs; the host grants it. The tests run as
+#
+#     lumen test std/tests/ --allow-net=127.0.0.1
+#
+# i.e. network access restricted to the loopback host — so the last tests can
+# also verify that the restriction holds (nothing here touches a real network).
+
+test "url_encode leaves unreserved characters alone":
+    assert_eq(net.url_encode("abc-._~XYZ019"), "abc-._~XYZ019")
+    assert_eq(net.url_encode(""), "")
+
+test "url_encode percent-encodes reserved and special characters":
+    assert_eq(net.url_encode("hello world"), "hello%20world")
+    assert_eq(net.url_encode("a/b?c=d&e"), "a%2Fb%3Fc%3Dd%26e")
+    assert_eq(net.url_encode("100%"), "100%25")
+
+test "url_encode rejects a code point outside 0-255 rather than mis-encoding it":
+    try:
+        net.url_encode(chr(8364))
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "outside 0-255"))
+
+test "build_query joins encoded key=value pairs with '&'":
+    assert_eq(net.build_query({"q": "hello world", "page": 2}), "q=hello%20world&page=2")
+    assert_eq(net.build_query({}), "")
+
+test "with_query appends '?' or '&' depending on whether the url already has one":
+    assert_eq(net.with_query("http://x.com/search", {"q": "a b"}), "http://x.com/search?q=a%20b")
+    assert_eq(net.with_query("http://x.com/search?x=1", {"q": "a b"}), "http://x.com/search?x=1&q=a%20b")
+    assert_eq(net.with_query("http://x.com/search", {}), "http://x.com/search")
+
+test "a granted request passes the capability gate and fails only at the network layer":
+    # A loopback address with nothing listening fails fast and deterministically
+    # (no live network or external service is needed): the error is the network
+    # layer's "http_get failed", NOT a PermissionError, so the call got past the
+    # gate — this file declared `net` and the host granted 127.0.0.1.
+    try:
+        net.get("http://127.0.0.1:1/nothing-listens-here")
+        fail("should have raised (nothing listens on that port)")
+    catch e:
+        assert(not strings.contains(e.message, "PermissionError"))
+        assert(strings.contains(e.message, "http_get failed"))
+
+test "importing std/net.lum is not a grant: a host outside the granted ones is denied":
+    # Granted: 127.0.0.1 only. A different host is refused BEFORE any connection
+    # is attempted, through the wrapper and through the raw builtin alike.
+    try:
+        net.get("http://127.0.0.2:1/x")
+        fail("should have been denied")
+    catch e:
+        assert_eq(e.kind, "PermissionError")
+        assert_eq(e.reason, "out-of-scope")
+        assert_eq(e.capability, "net.http")
+    try:
+        http_get("http://example.invalid/x")
+        fail("should have been denied")
+    catch e:
+        assert_eq(e.reason, "out-of-scope")
+
+test "a file:// URL is refused: http_get is network access, never file access":
+    try:
+        net.get("file:///etc/hostname")
+        fail("should have raised")
+    catch e:
+        assert(strings.contains(e.message, "only http:// and https://"))
+
+test "fetch composes get() with with_query()":
+    try:
+        net.fetch("http://127.0.0.1:1/nothing-listens-here", {"q": "x"})
+        fail("should have raised (nothing listens on that port)")
+    catch e:
+        assert(not strings.contains(e.message, "PermissionError"))
+        assert(strings.contains(e.message, "http_get failed"))
+
+test "get_json and fetch_json propagate (not re-wrap) http_get's own error":
+    try:
+        net.get_json("http://127.0.0.1:1/nothing-listens-here")
+        fail("should have raised (nothing listens on that port)")
+    catch e:
+        assert(strings.contains(e.message, "http_get failed"))
+    try:
+        net.fetch_json("http://127.0.0.1:1/nothing-listens-here", {"q": "x"})
+        fail("should have raised (nothing listens on that port)")
+    catch e:
+        assert(strings.contains(e.message, "http_get failed"))

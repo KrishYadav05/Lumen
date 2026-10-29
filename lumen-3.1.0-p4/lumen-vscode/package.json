@@ -1,0 +1,47 @@
+{
+  "name": "lumen-lang",
+  "displayName": "Lumen Language",
+  "description": "Syntax highlighting, diagnostics (with exact locations and codes), and autocomplete for Lumen (Language Specification 3.1)",
+  "version": "3.1.0-p4",
+  "publisher": "krishkumar",
+  "author": "Krish Kumar",
+  "engines": {
+    "vscode": "^1.73.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:lumen"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "lumen",
+        "aliases": [
+          "Lumen",
+          "lumen"
+        ],
+        "extensions": [
+          ".lum"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icon.svg",
+          "dark": "./icon.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "lumen",
+        "scopeName": "source.lumen",
+        "path": "./syntaxes/lumen.tmLanguage.json"
+      }
+    ]
+  }
+}

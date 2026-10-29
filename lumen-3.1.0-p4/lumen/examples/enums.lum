@@ -1,0 +1,35 @@
+enum Option:
+    Some(value)
+    None
+
+fn half(n):
+    if n % 2 == 0:
+        return Some(n / 2)
+    else:
+        return None
+
+let results = [half(10), half(7)]
+for r in results:
+    match r:
+        Some(v):
+            print "got " + v
+        None:
+            print "nothing"
+
+enum Shape:
+    Circle(radius)
+    Square(side)
+    Point
+
+fn area(s):
+    match s:
+        Circle(r):
+            return 3.14159 * r * r
+        Square(side):
+            return side * side
+        Point:
+            return 0
+
+print area(Circle(2))
+print area(Square(3))
+print area(Point)

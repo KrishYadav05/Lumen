@@ -1,0 +1,191 @@
+# std/fs.lum — Lumen standard library
+#
+# Higher-level file helpers over the `fs`-gated builtins (`read_file`,
+# `write_file`, `append_file`, `file_exists`, `is_dir`, `list_dir`,
+# `delete_file` — the last four plus `append_file` added in Language
+# Specification 2.3 specifically so this module could be more than a
+# two-function wrapper). This module re-exports those builtins (so they work
+# without the caller's own `use fs`, see below) and adds what they can't
+# express on their own: line-oriented I/O, telling files from directories
+# when listing, copy/move, and reading/writing JSON files through
+# `std/json.lum`.
+#
+# Capability note (Language Specification 3.0): this file declares `use fs`
+# below, which says what the module NEEDS — it grants nothing. A call through
+# this module succeeds only if all four of these hold (`docs/capabilities.md`
+# §2): this file declared the capability, EVERY program or module that imports
+# it declared the capability too, the host granted it for the run
+# (`--allow-read`, `--allow-write`, `--allow-list` or `--allow-fs`), and the
+# path is inside the granted directories. So a program using `fs.read_lines(...)`
+# must itself say `use fs.read` (or `use fs`) at its top level and be run with
+# `--allow-read[=DIR,...]`. A library cannot hold authority its importer
+# lacks, which is exactly why importing this module is NOT a capability grant:
+# the importer's own `use` line is still required, and it is still the host,
+# not the program, that decides.
+#
+# Stated limitations (nothing here papers over a missing primitive):
+#   - No directory creation/removal, rename, timestamps, sizes-in-bytes, or
+#     permissions: Lumen has no `mkdir`/`rmdir`/`rename`/`stat` builtins, so
+#     this module can't offer them. `delete_file` removes files only (an
+#     attempt on a directory fails with the OS's own "Is a directory").
+#   - Text only. The builtins read and write text (the host's default
+#     encoding); binary files are out of scope.
+#   - Whole-file operations: `read_file` loads the entire file into memory,
+#     so `read_lines`/`file_size` do too. There is no streaming I/O.
+#   - `file_size` is the number of *characters* in the file's text, which
+#     equals its byte size only for ASCII content (`len` counts characters
+#     everywhere in this language, never bytes).
+#   - `move_file` is copy-then-delete, not an atomic OS rename: if the copy
+#     succeeds and the delete then fails, the file exists at both paths.
+#
+# Parameter names avoid `path` on purpose: `std/path.lum` is imported below
+# under the alias `paths`, and a parameter named `path` would shadow a
+# module alias of the same name inside that function.
+
+use "path.lum" as paths
+use "json.lum" as json
+use fs
+
+# ---- the raw builtins, re-exported ----
+# Each of these is the builtin of the same name, wrapped so it can be called
+# as `fs.read_file(...)` etc. from a program that imported this module. The
+# wrappers add no authority: the importing program still needs its own
+# `use fs...` declaration and the host's grant (see the capability note above).
+# Inside this file a bare `read_file(...)` still means the builtin, never the
+# wrapper — a bare call to a name that is also a builtin always resolves to the
+# builtin (`docs/language.md` §1.7), the same trick `std/collections.lum` uses
+# for `range`, so none of these recurse.
+#
+# NOTE FOR AUDITORS: because a library can never exceed its importer, reading
+# the importing program's own `use` lines tells you the most any module it
+# imports can do — grep the program *and everything it imports* for
+# `use fs`/`use net` to see what each one needs, and look at the `--allow-*`
+# flags to see what is actually granted (`docs/security-model.md`).
+
+fn read_file(p):
+    return read_file(p)
+
+fn write_file(p, text):
+    return write_file(p, text)
+
+fn append_file(p, text):
+    return append_file(p, text)
+
+fn file_exists(p):
+    return file_exists(p)
+
+fn is_dir(p):
+    return is_dir(p)
+
+fn list_dir(p):
+    return list_dir(p)
+
+fn delete_file(p):
+    return delete_file(p)
+
+# ---- what the raw builtins can't express on their own ----
+
+fn is_file(p):
+    # An existing path that is not a directory. (`file_exists` alone is true
+    # for directories too; `is_dir` alone can't tell "file" from "nothing".)
+    return file_exists(p) and not is_dir(p)
+
+fn split_lines(content):
+    # Splits text into lines on "\n" (spelled chr(10) — Lumen string
+    # literals have no escapes). Follows Python's `str.splitlines`
+    # convention: a trailing newline does NOT produce a final empty line,
+    # so "a\nb\n" is ["a", "b"], "" is [], and "a\n\nb" is ["a", "", "b"].
+    # One iterative pass rather than `strings.split(content, chr(10))`: the
+    # two differ in exactly the trailing-newline case (split would give a
+    # final empty piece), and this is simpler than splitting then trimming.
+    # No "\r" handling needed: the builtins read in text mode, which already
+    # turns "\r\n" into "\n".
+    let lines = []
+    let current = ""
+    let nl = chr(10)
+    for c in content:
+        if c == nl:
+            push(lines, current)
+            current = ""
+        else:
+            current = current + c
+    if len(current) > 0:
+        push(lines, current)
+    return lines
+
+fn read_lines(p):
+    return split_lines(read_file(p))
+
+fn write_lines(p, lines):
+    # Overwrites the file with each element on its own line, every line —
+    # including the last — terminated by "\n" (the POSIX text-file
+    # convention, and what makes read_lines(p) after write_lines(p, xs)
+    # give back xs). Non-Str elements are converted to display form, same
+    # as `+` does everywhere else. An empty list writes an empty file.
+    let out = ""
+    let nl = chr(10)
+    for line in lines:
+        out = out + line + nl
+    write_file(p, out)
+
+fn append_line(p, line):
+    # Appends one "\n"-terminated line, creating the file if needed.
+    append_file(p, line + chr(10))
+
+fn file_size(p):
+    # Characters, not bytes — see the limitations note in the header.
+    return len(read_file(p))
+
+fn copy_file(src, dst):
+    # Overwrites `dst` if it exists.
+    write_file(dst, read_file(src))
+
+fn move_file(src, dst):
+    # Copy, then delete the source. A move onto itself is a no-op rather
+    # than a copy-then-delete that would destroy the only copy; "onto
+    # itself" is detected lexically (after `path.normalize`), so two
+    # different spellings of the same path ("a/../a" vs "a") ARE caught,
+    # but two different names for one file (a symlink) are not — there is
+    # no `stat`/`realpath` builtin to tell.
+    if paths.normalize(src) != paths.normalize(dst):
+        copy_file(src, dst)
+        delete_file(src)
+
+fn delete_if_exists(p):
+    # An idempotent `delete_file`: true if it deleted something, false if
+    # there was nothing there. Like `delete_file`, files only — a
+    # directory at `p` still fails (it is "something there", not nothing).
+    if file_exists(p):
+        delete_file(p)
+        return true
+    return false
+
+fn list_files(dir):
+    # Entries of `dir` that are regular files, as bare names, sorted
+    # (`list_dir` already sorts).
+    let out = []
+    for name in list_dir(dir):
+        if is_file(paths.join(dir, name)):
+            push(out, name)
+    return out
+
+fn list_subdirs(dir):
+    # Entries of `dir` that are directories, as bare names, sorted.
+    let out = []
+    for name in list_dir(dir):
+        if is_dir(paths.join(dir, name)):
+            push(out, name)
+    return out
+
+fn read_json(p):
+    # Reads and parses a JSON file in one call (the file-system twin of
+    # `std/net.lum`'s `get_json`). Propagates `read_file`'s and
+    # `json_decode`'s own errors unchanged, so the message says which stage
+    # failed.
+    return json.json_decode(read_file(p))
+
+fn write_json(p, value):
+    # Encodes `value` with `json_encode` and overwrites the file. Fails
+    # (before touching the file) on any value `json_encode` rejects — see
+    # `std/json.lum`'s header for what it can encode.
+    write_file(p, json.json_encode(value))

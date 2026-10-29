@@ -1,0 +1,96 @@
+# std/collections.lum — Lumen standard library
+#
+# Rewritten in 2.0 to use plain iterative loops with a mutated accumulator,
+# now that language.md §1.11.1's corrected assignment semantics make that
+# work correctly, and the native `range()` builtin to drive counted loops
+# instead of a hand-rolled recursive counter. The 1.1 version of this file
+# used recursion everywhere, for two compounding reasons: Rule B (fixed —
+# reassignment inside a `for` body used to silently shadow instead of
+# mutating the outer variable) and the lack of any non-recursive way to
+# manufacture a counting sequence at all. See CHANGELOG.md's 2.0 entry.
+# These rewrites are both shorter AND faster AND no longer risk the
+# interpreter's recursion-depth limit for a large list/count.
+
+fn sum(list):
+    let total = 0
+    for x in list:
+        total = total + x
+    return total
+
+fn min_list(list):
+    if len(list) == 0:
+        fail("min_list: empty list has no minimum")
+    let best = list[0]
+    for x in list:
+        if x < best:
+            best = x
+    return best
+
+fn max_list(list):
+    if len(list) == 0:
+        fail("max_list: empty list has no maximum")
+    let best = list[0]
+    for x in list:
+        if x > best:
+            best = x
+    return best
+
+fn range(n):
+    # A thin wrapper over the core `range()` builtin. This is NOT infinite
+    # recursion: a bare call to a name that is also a builtin always resolves
+    # to the builtin (language.md §1.7) — module-qualified calls like
+    # `col.range(5)` from another file are unaffected either way, since those
+    # go through this function's own entry, not the builtin-precedence rule.
+    return range(n)
+
+fn range_between(start, end):
+    return range(start, end)
+
+fn reverse(list):
+    let out = []
+    let n = len(list)
+    for i in range(n):
+        push(out, list[n - 1 - i])
+    return out
+
+fn substring_list(list, start, length):
+    let result = []
+    let n = len(list)
+    for offset in range(length):
+        let idx = start + offset
+        if idx < n and idx >= 0:
+            push(result, list[idx])
+    return result
+
+fn contains(list, item):
+    let found = false
+    for x in list:
+        if x == item:
+            found = true
+    return found
+
+fn index_of(list, item):
+    let result = -1
+    let i = 0
+    for x in list:
+        if x == item and result < 0:
+            result = i
+        i = i + 1
+    return result
+
+fn unique(list):
+    let seen = []
+    for x in list:
+        if not contains(seen, x):
+            push(seen, x)
+    return seen
+
+fn concat(a, b):
+    return a + b
+
+fn flatten(list_of_lists):
+    let acc = []
+    for inner in list_of_lists:
+        for x in inner:
+            push(acc, x)
+    return acc

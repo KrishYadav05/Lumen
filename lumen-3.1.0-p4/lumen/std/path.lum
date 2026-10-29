@@ -1,0 +1,155 @@
+# std/path.lum — Lumen standard library
+#
+# POSIX-style (forward-slash) path manipulation: pure string logic, no
+# filesystem access and no `fs` capability requirement — these functions
+# work the same whether or not the paths they're given actually exist on
+# disk. (A future `std/fs.lum` that wraps `read_file`/`write_file` is a
+# separate, not-yet-built module; this one never touches the `fs` builtins.)
+#
+# Conventions, stated explicitly since path-joining rules vary by
+# language/library and this module picks one rather than leaving it
+# ambiguous:
+#   - `join(a, b)` follows Python's `os.path.join(a, b)` convention: if `b`
+#     is itself absolute, the result is `b` alone (joining with an absolute
+#     path "resets" to it, matching how a shell `cd` would behave) —
+#     otherwise `a` and `b` are concatenated with exactly one `/` between
+#     them, never two.
+#   - `normalize(p)` collapses repeated `/` and resolves `.`/`..` segments
+#     *lexically* (by string manipulation only, exactly like Python's
+#     `os.path.normpath` or POSIX's own definition) — it does NOT consult
+#     the filesystem, so it cannot know about symlinks. A leading `..` on
+#     an absolute path is dropped (POSIX: `/..` normalizes to `/`, since you
+#     can't go above the root), but a leading `..` on a relative path is
+#     kept (there may be a real parent directory to walk up into).
+#   - All functions assume `/` as the separator; there is no Windows
+#     backslash handling. Lumen itself is cross-platform, but this module
+#     is deliberately scoped to POSIX-style paths only — stated here as a
+#     limitation rather than silently mishandled.
+#
+# `normalize`'s segment-stack algorithm needs to drop the last collected
+# segment when it sees a `..` — ordinarily a list "pop", which this
+# language's builtin surface doesn't have (only `push` exists, confirmed
+# against the builtin list while designing this module). Worked around
+# with `collections.substring_list(list, 0, len(list) - 1)` to rebuild the
+# list one element shorter, rather than adding a new core-language builtin
+# for a single stdlib module's sake.
+
+use "strings.lum" as strings
+use "collections.lum" as collections
+
+fn is_absolute(p):
+    return len(p) > 0 and p[0] == "/"
+
+fn join(a, b):
+    # Two-argument join, matching Python's `os.path.join(a, b)` — see the
+    # header comment for the exact rule. Use `join_all` for more than two
+    # path segments at once.
+    if len(a) == 0:
+        return b
+    if is_absolute(b):
+        return b
+    if strings.ends_with(a, "/"):
+        return a + b
+    return a + "/" + b
+
+fn join_all(parts):
+    # Repeated pairwise `join`, left to right: join_all(["a","b","c"]) ==
+    # join(join("a","b"),"c") == "a/b/c". An empty list joins to "".
+    if len(parts) == 0:
+        return ""
+    let result = parts[0]
+    let i = 1
+    while i < len(parts):
+        result = join(result, parts[i])
+        i = i + 1
+    return result
+
+fn _is_all_slashes(s):
+    # True only for a non-empty string made up entirely of "/" characters.
+    # Drives split()'s one genuine special case: a head of all slashes (the
+    # root, or a run of leading slashes) is never stripped down to "".
+    if len(s) == 0:
+        return false
+    for c in s:
+        if c != "/":
+            return false
+    return true
+
+fn _rstrip_slashes(s):
+    # Trims trailing "/" characters only (not arbitrary whitespace — this
+    # is a private helper for split(), not a general string-trim utility).
+    let end = len(s)
+    while end > 0 and strings.substring(s, end - 1, 1) == "/":
+        end = end - 1
+    return strings.substring(s, 0, end)
+
+fn split(p):
+    # [dirname(p), basename(p)] as a pair. Matches Python's `os.path.split`
+    # exactly, including its least-obvious case: splitting after the LAST
+    # "/" gives a head that, if it's anything other than a run of pure "/"
+    # characters, has its own trailing slashes stripped — so
+    # split("a/b/c.txt") == ["a/b", "c.txt"] and split("a/b/") == ["a/b", ""]
+    # (the trailing slash is stripped from the head either way), but
+    # split("/a") == ["/", "a"] and split("/") == ["/", ""] (a bare root
+    # is kept as "/", never collapsed to "").
+    let idx = strings.last_index_of(p, "/")
+    if idx < 0:
+        return ["", p]
+    let i = idx + 1
+    let head = strings.substring(p, 0, i)
+    let tail = strings.substring(p, i, len(p) - i)
+    if not _is_all_slashes(head):
+        head = _rstrip_slashes(head)
+    return [head, tail]
+
+fn dirname(p):
+    return split(p)[0]
+
+fn basename(p):
+    return split(p)[1]
+
+fn extension(p):
+    # The part of the final path segment after its last ".", including the
+    # dot ("file.tar.gz" -> ".gz"), or "" if that segment has none. A
+    # segment whose ONLY dot is its first character (a dotfile like
+    # ".bashrc") is treated as having no extension, matching the common
+    # convention that a leading dot marks a hidden file, not a suffix.
+    let name = basename(p)
+    let idx = strings.last_index_of(name, ".")
+    if idx <= 0:
+        return ""
+    return strings.substring(name, idx, len(name) - idx)
+
+fn stem(p):
+    # basename(p) with its extension() (if any) removed: stem("a/b.txt")
+    # == "b", stem(".bashrc") == ".bashrc" (no extension to remove, per
+    # extension()'s dotfile rule above).
+    let name = basename(p)
+    let ext = extension(p)
+    if len(ext) == 0:
+        return name
+    return strings.substring(name, 0, len(name) - len(ext))
+
+fn normalize(p):
+    # Lexically collapses repeated "/" and resolves "." / ".." segments —
+    # see the header comment for the exact rules and their rationale.
+    let absolute = is_absolute(p)
+    let raw_parts = strings.split(p, "/")
+    let out = []
+    for seg in raw_parts:
+        if len(seg) > 0 and seg != ".":
+            if seg == "..":
+                if len(out) > 0 and out[len(out) - 1] != "..":
+                    out = collections.substring_list(out, 0, len(out) - 1)
+                else:
+                    if not absolute:
+                        push(out, "..")
+                    # else: ".." above an absolute root is dropped ("/.." -> "/")
+            else:
+                push(out, seg)
+    let joined = strings.join(out, "/")
+    if absolute:
+        return "/" + joined
+    if len(joined) == 0:
+        return "."
+    return joined

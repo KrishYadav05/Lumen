@@ -1,0 +1,30 @@
+# Declaring vs granting (Language Specification 3.0) — run this from the repository root.
+#
+#   lumen run examples/capabilities_demo.lum
+#       -> every attempt is DENIED: a program can do nothing outside itself by default.
+#   lumen run --allow-read=examples examples/capabilities_demo.lum
+#       -> reading inside examples/ works; reading anything else is still denied.
+#   lumen run --allow-read=examples --allow-list=examples examples/capabilities_demo.lum
+#       -> listing is a separate permission, granted separately.
+#
+# The `use` line below only DECLARES what this file needs. It grants nothing:
+# the person running the program decides, with the --allow-* flags.
+use fs.read
+use fs.list
+
+fn attempt(label, path):
+    try:
+        let text = read_file(path)
+        print label + ": read " + len(text) + " characters"
+    catch e:
+        if e.kind == "PermissionError":
+            print label + ": denied (" + e.reason + ")"
+        else:
+            print label + ": " + e.message
+
+attempt("inside  ", "examples/hello.lum")
+attempt("outside ", "std/fs.lum")
+try:
+    print "listing : " + len(list_dir("examples")) + " entries"
+catch e:
+    print "listing : denied (" + e.reason + ")"
